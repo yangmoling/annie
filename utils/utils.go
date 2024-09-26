@@ -4,28 +4,20 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/md5"
-	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 
-	"github.com/fatih/color"
-	"github.com/tidwall/gjson"
+	"github.com/pkg/errors"
 
-	"github.com/iawia002/annie/config"
-	"github.com/iawia002/annie/request"
+	"github.com/iawia002/lux/request"
 )
-
-// GetStringFromJSON get the string value from json path
-func GetStringFromJSON(json, path string) string {
-	return gjson.Get(json, path).String()
-}
 
 // MatchOneOf match one of the patterns
 func MatchOneOf(text string, patterns ...string) []string {
@@ -70,7 +62,7 @@ func Domain(url string) string {
 	domainPattern := `([a-z0-9][-a-z0-9]{0,62})\.` +
 		`(com\.cn|com\.hk|` +
 		`cn|com|net|edu|gov|biz|org|info|pro|name|xxx|xyz|be|` +
-		`me|top|cc|tv|tt)`
+		`me|top|cc|tv|tt|vn)`
 	domain := MatchOneOf(url, domainPattern)
 	if domain != nil {
 		return domain[1]
@@ -160,35 +152,12 @@ func ParseInputFile(r io.Reader, items string, itemStart, itemEnd int) []string 
 
 	itemList := make([]string, 0, len(wantedItems))
 	for i, item := range temp {
-		if ItemInSlice(i, wantedItems) {
+		if slices.Contains(wantedItems, i+1) {
 			itemList = append(itemList, item)
 		}
 	}
 
 	return itemList
-}
-
-// ItemInSlice if a item is in the list
-func ItemInSlice(item, list interface{}) bool {
-	v1 := reflect.ValueOf(item)
-	v2 := reflect.ValueOf(list)
-	for i := 0; i < v2.Len(); i++ {
-		indexType := v2.Index(i).Type().String()
-		if v1.Type().String() != indexType {
-			continue
-		}
-		switch indexType {
-		case "int":
-			if v1.Int() == v2.Index(i).Int() {
-				return true
-			}
-		case "string":
-			if v1.String() == v2.Index(i).String() {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // GetNameAndExt return the name and ext of the URL
@@ -229,7 +198,7 @@ func M3u8URLs(uri string) ([]string, error) {
 
 	html, err := request.Get(uri, "", nil)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	lines := strings.Split(html, "\n")
 	var urls []string
@@ -252,17 +221,6 @@ func M3u8URLs(uri string) ([]string, error) {
 		}
 	}
 	return urls, nil
-}
-
-// PrintVersion print version information
-func PrintVersion() {
-	blue := color.New(color.FgBlue)
-	cyan := color.New(color.FgCyan)
-	fmt.Printf(
-		"\n%s: version %s, A fast, simple and clean video downloader.\n\n",
-		cyan.Sprintf("annie"),
-		blue.Sprintf(config.VERSION),
-	)
 }
 
 // Reverse Reverse a string

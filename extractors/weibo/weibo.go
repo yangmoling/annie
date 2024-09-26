@@ -10,10 +10,16 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/iawia002/annie/extractors/types"
-	"github.com/iawia002/annie/request"
-	"github.com/iawia002/annie/utils"
+	"github.com/pkg/errors"
+
+	"github.com/iawia002/lux/extractors"
+	"github.com/iawia002/lux/request"
+	"github.com/iawia002/lux/utils"
 )
+
+func init() {
+	extractors.Register("weibo", New())
+}
 
 type playInfo struct {
 	Title string            `json:"title"`
@@ -38,7 +44,6 @@ func getXSRFToken() (string, error) {
 	}
 	url := "https://weibo.com/ajax/getversion"
 	req, err := http.NewRequest(http.MethodHead, url, nil)
-
 	if err != nil {
 		return "", err
 	}
@@ -48,14 +53,23 @@ func getXSRFToken() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	token := utils.MatchOneOf(res.Header.Get("Set-Cookie"), `XSRF-TOKEN=(.+?);`)[1]
-	return token, nil
+	defer res.Body.Close() // nolint
+
+	cookie := res.Header.Get("Set-Cookie")
+	if cookie == "" {
+		return "", nil
+	}
+	xsrfTokens := utils.MatchOneOf(cookie, `XSRF-TOKEN=(.+?);`)
+	if xsrfTokens == nil || len(xsrfTokens) != 2 {
+		return "", nil
+	}
+	return xsrfTokens[1], nil
 }
 
-func downloadWeiboVideo(url string) ([]*types.Data, error) {
+func downloadWeiboVideo(url string) ([]*extractors.Data, error) {
 	urldata, err := netURL.Parse(url)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	api := fmt.Sprintf(
 		"https://video.h5.weibo.cn/s/video/object?object_id=%s&mid=%s",
@@ -64,26 +78,26 @@ func downloadWeiboVideo(url string) ([]*types.Data, error) {
 	jsonString, err := request.Get(api, "", nil)
 
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	rawSummary := utils.MatchOneOf(jsonString, `"summary":"(.+?)",`)[1]
 	summary, err := strconv.Unquote(strings.Replace(strconv.Quote(rawSummary), `\\u`, `\u`, -1))
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	rawhdURL := utils.MatchOneOf(jsonString, `"hd_url":"([^"]+)",`)[1]
 	unescapedhdURL, err := strconv.Unquote(strings.Replace(strconv.Quote(rawhdURL), `\\u`, `\u`, -1))
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	realhdURL := strings.ReplaceAll(unescapedhdURL, `\/`, `/`)
 	hdsize, err := request.Size(realhdURL, "")
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
-	streams := make(map[string]*types.Stream, 2)
-	streams["hd"] = &types.Stream{
-		Parts: []*types.Part{
+	streams := make(map[string]*extractors.Stream, 2)
+	streams["hd"] = &extractors.Stream{
+		Parts: []*extractors.Part{
 			{
 				URL:  realhdURL,
 				Size: hdsize,
@@ -96,15 +110,15 @@ func downloadWeiboVideo(url string) ([]*types.Data, error) {
 	rawURL := utils.MatchOneOf(jsonString, `"url":"([^"]+)",`)[1]
 	unescapedURL, err := strconv.Unquote(strings.Replace(strconv.Quote(rawURL), `\\u`, `\u`, -1))
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	realURL := strings.ReplaceAll(unescapedURL, `\/`, `/`)
 	size, err := request.Size(realURL, "")
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
-	streams["sd"] = &types.Stream{
-		Parts: []*types.Part{
+	streams["sd"] = &extractors.Stream{
+		Parts: []*extractors.Part{
 			{
 				URL:  realhdURL,
 				Size: size,
@@ -114,33 +128,36 @@ func downloadWeiboVideo(url string) ([]*types.Data, error) {
 		Size:    size,
 		Quality: "sd",
 	}
-	return []*types.Data{
+	return []*extractors.Data{
 		{
 			Site:    "微博 weibo.com",
 			Title:   summary,
-			Type:    types.DataTypeVideo,
+			Type:    extractors.DataTypeVideo,
 			Streams: streams,
 			URL:     url,
 		},
 	}, nil
 }
 
-func downloadWeiboTV(url string) ([]*types.Data, error) {
+func downloadWeiboTV(url string) ([]*extractors.Data, error) {
 	APIEndpoint := "https://weibo.com/tv/api/component?page="
 	urldata, err := netURL.Parse(url)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	APIURL := APIEndpoint + netURL.QueryEscape(urldata.Path)
 	token, err := getXSRFToken()
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	headers := map[string]string{
-		"Cookie":       "SUB=_2AkMpogLYf8NxqwJRmP0XxG7kbo10ww_EieKf_vMDJRMxHRl-yj_nqm4NtRB6AiIsKFFGRY4-UuGD5B1-Kf9glz3sp7Ii; XSRF-TOKEN=" + token,
+		"Cookie":       "SUB=_2AkMpogLYf8NxqwJRmP0XxG7kbo10ww_EieKf_vMDJRMxHRl-yj_nqm4NtRB6AiIsKFFGRY4-UuGD5B1-Kf9glz3sp7Ii",
 		"Referer":      utils.MatchOneOf(url, `^([^?]+)`)[1],
 		"content-type": `application/x-www-form-urlencoded`,
-		"x-xsrf-token": token,
+	}
+	if token != "" {
+		headers["Cookie"] += "; XSRF-TOKEN=" + token
+		headers["x-xsrf-token"] = token
 	}
 	oid := utils.MatchOneOf(url, `tv/show/([^?]+)`)[1]
 	postData := "data=" + netURL.QueryEscape("{\"Component_Play_Playinfo\":{\"oid\":\""+oid+"\"}}")
@@ -148,25 +165,25 @@ func downloadWeiboTV(url string) ([]*types.Data, error) {
 	res, err := request.Request(http.MethodPost, APIURL, payload, headers)
 
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	defer res.Body.Close() // nolint
 	var dataReader io.ReadCloser
 	if res.Header.Get("Content-Encoding") == "gzip" {
 		dataReader, err = gzip.NewReader(res.Body)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 	} else {
 		dataReader = res.Body
 	}
 	var data weiboData
 	if err = json.NewDecoder(dataReader).Decode(&data); err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 
 	if data.Data.PlayInfo.URLs == nil {
-		return nil, types.ErrURLParseFailed
+		return nil, errors.WithStack(extractors.ErrURLParseFailed)
 	}
 	realURLs := map[string]string{}
 	for k, v := range data.Data.PlayInfo.URLs {
@@ -176,14 +193,14 @@ func downloadWeiboTV(url string) ([]*types.Data, error) {
 		realURLs[k] = "https:" + v
 	}
 
-	streams := make(map[string]*types.Stream, len(realURLs))
+	streams := make(map[string]*extractors.Stream, len(realURLs))
 	for q, u := range realURLs {
 		size, err := request.Size(u, "")
 		if err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
-		streams[q] = &types.Stream{
-			Parts: []*types.Part{
+		streams[q] = &extractors.Stream{
+			Parts: []*extractors.Part{
 				{
 					URL:  u,
 					Size: size,
@@ -194,11 +211,11 @@ func downloadWeiboTV(url string) ([]*types.Data, error) {
 			Quality: q,
 		}
 	}
-	return []*types.Data{
+	return []*extractors.Data{
 		{
 			Site:    "微博 weibo.com",
 			Title:   data.Data.PlayInfo.Title,
-			Type:    types.DataTypeVideo,
+			Type:    extractors.DataTypeVideo,
 			Streams: streams,
 			URL:     url,
 		},
@@ -207,13 +224,13 @@ func downloadWeiboTV(url string) ([]*types.Data, error) {
 
 type extractor struct{}
 
-// New returns a youtube extractor.
-func New() types.Extractor {
+// New returns a weibo extractor.
+func New() extractors.Extractor {
 	return &extractor{}
 }
 
 // Extract is the main function to extract the data.
-func (e *extractor) Extract(url string, option types.Options) ([]*types.Data, error) {
+func (e *extractor) Extract(url string, option extractors.Options) ([]*extractors.Data, error) {
 	if !strings.Contains(url, "m.weibo.cn") {
 		if strings.Contains(url, "weibo.com/tv/show/") {
 			return downloadWeiboTV(url)
@@ -224,45 +241,56 @@ func (e *extractor) Extract(url string, option types.Options) ([]*types.Data, er
 	}
 	html, err := request.Get(url, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 	titles := utils.MatchOneOf(
 		html, `"content2": "(.+?)",`, `"status_title": "(.+?)",`,
 	)
 	if titles == nil || len(titles) < 2 {
-		return nil, types.ErrURLParseFailed
+		return nil, errors.WithStack(extractors.ErrURLParseFailed)
 	}
 	title := titles[1]
 
-	realURLs := utils.MatchOneOf(
-		html, `"stream_url_hd": "(.+?)"`, `"stream_url": "(.+?)"`,
+	urlsJsonStrs := utils.MatchOneOf(
+		html, `"urls": (\{[^\}]+\})`,
 	)
-	if realURLs == nil || len(realURLs) < 2 {
-		return nil, types.ErrURLParseFailed
+	if urlsJsonStrs == nil || len(urlsJsonStrs) < 2 {
+		return nil, errors.WithStack(extractors.ErrURLParseFailed)
 	}
-	realURL := realURLs[1]
-
-	size, err := request.Size(realURL, url)
+	urlsJson := urlsJsonStrs[1]
+	var qualityUrls map[string]string
+	err = json.Unmarshal([]byte(urlsJson), &qualityUrls)
 	if err != nil {
-		return nil, err
-	}
-	urlData := &types.Part{
-		URL:  realURL,
-		Size: size,
-		Ext:  "mp4",
-	}
-	streams := map[string]*types.Stream{
-		"default": {
-			Parts: []*types.Part{urlData},
-			Size:  size,
-		},
+		return nil, errors.WithStack(extractors.ErrURLParseFailed)
 	}
 
-	return []*types.Data{
+	streams := make(map[string]*extractors.Stream)
+	var size int64
+	for quality, realURL := range qualityUrls {
+		streamId := quality
+		size, err = request.Size(realURL, url)
+		if err != nil {
+			continue
+		}
+		urlData := &extractors.Part{
+			URL:  realURL,
+			Size: size,
+			Ext:  "mp4",
+		}
+		streams[streamId] = &extractors.Stream{
+			Parts: []*extractors.Part{urlData},
+			Size:  size,
+		}
+	}
+	if err != nil || len(streams) <= 0 {
+		return nil, errors.WithStack(err)
+	}
+
+	return []*extractors.Data{
 		{
 			Site:    "微博 weibo.com",
 			Title:   title,
-			Type:    types.DataTypeVideo,
+			Type:    extractors.DataTypeVideo,
 			Streams: streams,
 			URL:     url,
 		},

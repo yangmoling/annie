@@ -6,42 +6,6 @@ import (
 	"testing"
 )
 
-func TestGetStringFromJSON(t *testing.T) {
-	type args struct {
-		json string
-		path string
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{
-			name: "json happy path test1",
-			args: args{
-				json: `{"name":{"first":"Janet","last":"Prichard"},"age":47}`,
-				path: "name.first",
-			},
-			want: "Janet",
-		},
-		{
-			name: "json happy path test2",
-			args: args{
-				json: `{"children": ["Sara","Alex","Jack"]}`,
-				path: "children.1",
-			},
-			want: "Alex",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := GetStringFromJSON(tt.args.json, tt.args.path); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("GetStringFromJSON() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestMatchOneOf(t *testing.T) {
 	type args struct {
 		patterns []string
@@ -317,58 +281,6 @@ func TestFilePath(t *testing.T) {
 	}
 }
 
-func TestItemInSlice(t *testing.T) {
-	type args struct {
-		i    interface{}
-		list interface{}
-	}
-	tests := []struct {
-		name string
-		args args
-		want bool
-	}{
-		{
-			name: "int in slice test 1",
-			args: args{
-				i:    1,
-				list: []int{1, 2},
-			},
-			want: true,
-		},
-		{
-			name: "int in slice test 2",
-			args: args{
-				i:    1,
-				list: []int{2, 3},
-			},
-			want: false,
-		},
-		{
-			name: "string test 1",
-			args: args{
-				i:    "hello",
-				list: []string{"2", "hello"},
-			},
-			want: true,
-		},
-		{
-			name: "mix test 1",
-			args: args{
-				i:    3,
-				list: []string{"2", "3"},
-			},
-			want: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ItemInSlice(tt.args.i, tt.args.list); got != tt.want {
-				t.Errorf("ItemInSlice() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestGetNameAndExt(t *testing.T) {
 	type args struct {
 		uri string
@@ -441,10 +353,6 @@ func TestMd5(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestPrintVersion(t *testing.T) {
-	PrintVersion()
 }
 
 func TestReverse(t *testing.T) {
@@ -617,10 +525,9 @@ func TestParsingFile(t *testing.T) {
 		got := ParseInputFile(file, "", start, 0)
 		defer file.Close()
 
-		// start from line x to the end of the file
-		// remember that the slices begin with 0 thats why it finds one line less
-		if len(got) != linesCount-start {
-			t.Errorf("Got: %v - want: %v", len(got), linesCount-start)
+		wanted := linesCount - start + 1
+		if len(got) != wanted {
+			t.Errorf("Got: %v - want: %v", len(got), wanted)
 		}
 	})
 }

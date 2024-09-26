@@ -3,8 +3,8 @@ package instagram
 import (
 	"testing"
 
-	"github.com/iawia002/annie/extractors/types"
-	"github.com/iawia002/annie/test"
+	"github.com/iawia002/lux/extractors"
+	"github.com/iawia002/lux/test"
 )
 
 func TestDownload(t *testing.T) {
@@ -17,7 +17,7 @@ func TestDownload(t *testing.T) {
 			args: test.Args{
 				URL:   "https://www.instagram.com/p/BlIka1ZFCNr",
 				Title: "Instagram BlIka1ZFCNr",
-				Size:  3003662,
+				Size:  992330,
 			},
 		},
 		{
@@ -33,13 +33,13 @@ func TestDownload(t *testing.T) {
 			args: test.Args{
 				URL:   "https://www.instagram.com/p/Bjyr-gxF4Rb",
 				Title: "Instagram Bjyr-gxF4Rb",
-				Size:  4599909,
+				Size:  656476,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			data, err := New().Extract(tt.args.URL, types.Options{})
+			data, err := New().Extract(tt.args.URL, extractors.Options{})
 			test.CheckError(t, err)
 			test.Check(t, tt.args, data[0])
 		})

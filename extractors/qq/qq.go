@@ -2,15 +2,21 @@ package qq
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/iawia002/annie/extractors/types"
-	"github.com/iawia002/annie/request"
-	"github.com/iawia002/annie/utils"
+	"github.com/pkg/errors"
+
+	"github.com/iawia002/lux/extractors"
+	"github.com/iawia002/lux/request"
+	"github.com/iawia002/lux/utils"
 )
+
+func init() {
+	extractors.Register("qq", New())
+}
 
 type qqVideoInfo struct {
 	Fl struct {
@@ -18,7 +24,7 @@ type qqVideoInfo struct {
 			ID    int    `json:"id"`
 			Name  string `json:"name"`
 			Cname string `json:"cname"`
-			Fs    int    `json:"fs"`
+			Fs    int64  `json:"fs"`
 		} `json:"fi"`
 	} `json:"fl"`
 	Vl struct {
@@ -60,7 +66,7 @@ func getVinfo(vid, defn, refer string) (qqVideoInfo, error) {
 	}
 	jsonStrings := utils.MatchOneOf(html, `QZOutputJson=(.+);$`)
 	if jsonStrings == nil || len(jsonStrings) < 2 {
-		return qqVideoInfo{}, types.ErrURLParseFailed
+		return qqVideoInfo{}, errors.WithStack(extractors.ErrURLParseFailed)
 	}
 	jsonString := jsonStrings[1]
 	var data qqVideoInfo
@@ -70,8 +76,8 @@ func getVinfo(vid, defn, refer string) (qqVideoInfo, error) {
 	return data, nil
 }
 
-func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, error) {
-	streams := make(map[string]*types.Stream)
+func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*extractors.Stream, error) {
+	streams := make(map[string]*extractors.Stream)
 	var vkey string
 	// number of fragments
 	var clips int
@@ -79,7 +85,7 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 	for _, fi := range data.Fl.Fi {
 		var fmtIDPrefix string
 		var fns []string
-		if utils.ItemInSlice(fi.Name, []string{"shd", "fhd"}) {
+		if slices.Contains([]string{"shd", "fhd"}, fi.Name) {
 			fmtIDPrefix = "p"
 			fmtIDName := fmt.Sprintf("%s%d", fmtIDPrefix, fi.ID%10000)
 			fns = []string{strings.Split(data.Vl.Vi[0].Fn, ".")[0], fmtIDName, "mp4"}
@@ -95,7 +101,7 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 		} else {
 			tmpData, err := getVinfo(vid, fi.Name, cdn)
 			if err != nil {
-				return nil, err
+				return nil, errors.WithStack(err)
 			}
 			fns = strings.Split(tmpData.Vl.Vi[0].Fn, ".")
 			if len(fns) >= 3 && utils.MatchOneOf(fns[1], `^p(\d{3})$`) != nil {
@@ -107,7 +113,7 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 			}
 		}
 
-		var urls []*types.Part
+		var urls []*extractors.Part
 		var totalSize int64
 		var filename string
 		for part := 1; part < clips+1; part++ {
@@ -129,17 +135,17 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 				), "", nil,
 			)
 			if err != nil {
-				return nil, err
+				return nil, errors.WithStack(err)
 			}
 			jsonStrings := utils.MatchOneOf(html, `QZOutputJson=(.+);$`)
 			if jsonStrings == nil || len(jsonStrings) < 2 {
-				return nil, types.ErrURLParseFailed
+				return nil, errors.WithStack(extractors.ErrURLParseFailed)
 			}
 			jsonString := jsonStrings[1]
 
 			var keyData qqKeyInfo
 			if err = json.Unmarshal([]byte(jsonString), &keyData); err != nil {
-				return nil, err
+				return nil, errors.WithStack(err)
 			}
 
 			vkey = keyData.Key
@@ -149,9 +155,9 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 			realURL := fmt.Sprintf("%s%s?vkey=%s", cdn, filename, vkey)
 			size, err := request.Size(realURL, cdn)
 			if err != nil {
-				return nil, err
+				return nil, errors.WithStack(err)
 			}
-			urlData := &types.Part{
+			urlData := &extractors.Part{
 				URL:  realURL,
 				Size: size,
 				Ext:  "mp4",
@@ -159,7 +165,7 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 			urls = append(urls, urlData)
 			totalSize += size
 		}
-		streams[fi.Name] = &types.Stream{
+		streams[fi.Name] = &extractors.Stream{
 			Parts:   urls,
 			Size:    totalSize,
 			Quality: fi.Cname,
@@ -170,37 +176,37 @@ func genStreams(vid, cdn string, data qqVideoInfo) (map[string]*types.Stream, er
 
 type extractor struct{}
 
-// New returns a youtube extractor.
-func New() types.Extractor {
+// New returns a qq extractor.
+func New() extractors.Extractor {
 	return &extractor{}
 }
 
 // Extract is the main function to extract the data.
-func (e *extractor) Extract(url string, option types.Options) ([]*types.Data, error) {
+func (e *extractor) Extract(url string, option extractors.Options) ([]*extractors.Data, error) {
 	vids := utils.MatchOneOf(url, `vid=(\w+)`, `/(\w+)\.html`)
 	if vids == nil || len(vids) < 2 {
-		return nil, types.ErrURLParseFailed
+		return nil, errors.WithStack(extractors.ErrURLParseFailed)
 	}
 	vid := vids[1]
 
 	if len(vid) != 11 {
 		u, err := request.Get(url, url, nil)
 		if err != nil {
-			return nil, err
+			return nil, errors.WithStack(err)
 		}
 
 		vids = utils.MatchOneOf(
 			u, `vid=(\w+)`, `vid:\s*["'](\w+)`, `vid\s*=\s*["']\s*(\w+)`,
 		)
 		if vids == nil || len(vids) < 2 {
-			return nil, types.ErrURLParseFailed
+			return nil, errors.WithStack(extractors.ErrURLParseFailed)
 		}
 		vid = vids[1]
 	}
 
 	data, err := getVinfo(vid, "shd", url)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 
 	// API request error
@@ -210,14 +216,14 @@ func (e *extractor) Extract(url string, option types.Options) ([]*types.Data, er
 	cdn := data.Vl.Vi[0].Ul.UI[0].URL
 	streams, err := genStreams(vid, cdn, data)
 	if err != nil {
-		return nil, err
+		return nil, errors.WithStack(err)
 	}
 
-	return []*types.Data{
+	return []*extractors.Data{
 		{
 			Site:    "腾讯视频 v.qq.com",
 			Title:   data.Vl.Vi[0].Ti,
-			Type:    types.DataTypeVideo,
+			Type:    extractors.DataTypeVideo,
 			Streams: streams,
 			URL:     url,
 		},
